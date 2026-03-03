@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<!-- ═══════════════════════════════════════════════════
+     SECURITY HEADERS
+     - strict CSP: no eval, no external scripts, no fetch
+     - X-Frame-Options: DENY (clickjacking)
+     - no referrer leakage
+     - permissions policy locks hardware APIs
+     ═══════════════════════════════════════════════════ -->
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none';">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="X-Frame-Options" content="DENY">
+<meta http-equiv="Referrer-Policy" content="no-referrer">
+<meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=(), usb=()">
+<title>TreeScribe — ASCII Directory Tree Creator</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --green: #00ff41; --green-dim: #00cc33; --green-faint: #003d0f;
+    --green-glow: rgba(0,255,65,0.15);
+    --bg: #0a0a0a; --bg2: #0f0f0f; --bg3: #141414;
+    --border: #1f1f1f; --border-bright: #2a2a2a;
+    --text: #c8ffc8; --text-dim: #6a8f6a; --text-muted: #3a5a3a;
+    --red: #ff3333; --warn: #ffb000;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 13px; overflow: hidden; }
+
+  /* CRT scanlines */
+  body::before { content:''; position:fixed; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px); pointer-events:none; z-index:9999; }
+  body::after  { content:''; position:fixed; inset:0; background:radial-gradient(ellipse at center,transparent 60%,rgba(0,0,0,0.7) 100%); pointer-events:none; z-index:9998; }
+
+  .app { display:grid; grid-template-rows:auto 1fr auto; height:100vh; }
+
+  /* HEADER */
+  .header { border-bottom:1px solid var(--border); padding:10px 20px; display:flex; align-items:center; gap:16px; background:var(--bg2); position:relative; overflow:hidden; }
+  .header::after { content:''; position:absolute; bottom:0; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,var(--green-dim),transparent); }
+  .logo { display:flex; align-items:center; gap:10px; }
+  .logo-icon { color:var(--green); font-size:18px; text-shadow:0 0 12px var(--green); animation:pulse 3s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{text-shadow:0 0 8px var(--green)} 50%{text-shadow:0 0 20px var(--green),0 0 40px rgba(0,255,65,0.3)} }
+  .logo-text { font-size:16px; font-weight:700; color:var(--green); letter-spacing:2px; text-shadow:0 0 10px rgba(0,255,65,0.4); text-transform:uppercase; }
+  .logo-sub { font-size:9px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; }
+  .header-mid { flex:1; display:flex; align-items:center; justify-content:center; gap:4px; }
+  .style-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); font-family:inherit; font-size:10px; padding:4px 10px; cursor:pointer; letter-spacing:1px; text-transform:uppercase; transition:all .15s; }
+  .style-btn:hover { border-color:var(--green-dim); color:var(--green); }
+  .style-btn.active { background:var(--green-faint); border-color:var(--green); color:var(--green); box-shadow:0 0 8px rgba(0,255,65,0.2); }
+  .header-right { font-size:9px; color:var(--text-muted); letter-spacing:1px; }
+
+  /* MAIN */
+  .main { display:grid; grid-template-columns:320px 1fr; overflow:hidden; }
+
+  /* SIDEBAR */
+  .sidebar { border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; background:var(--bg2); }
+  .panel-header { padding:8px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; background:var(--bg3); flex-shrink:0; }
+  .panel-title { font-size:9px; font-weight:600; letter-spacing:2px; text-transform:uppercase; color:var(--text-dim); }
+  .panel-title span { color:var(--green); margin-right:6px; }
+
+  .tree-toolbar { padding:8px 10px; display:flex; gap:4px; border-bottom:1px solid var(--border); flex-shrink:0; flex-wrap:wrap; }
+  .tb-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); font-family:inherit; font-size:10px; padding:4px 8px; cursor:pointer; letter-spacing:.5px; transition:all .12s; white-space:nowrap; }
+  .tb-btn:hover { border-color:var(--green-dim); color:var(--green); background:var(--green-faint); }
+  .tb-btn.danger:hover { border-color:var(--red); color:var(--red); background:rgba(255,51,51,.05); }
+
+  /* DROP ZONE */
+  .drop-zone { margin:8px 10px; border:1px dashed var(--border-bright); padding:12px; text-align:center; color:var(--text-muted); font-size:10px; letter-spacing:1px; cursor:pointer; transition:all .2s; flex-shrink:0; position:relative; overflow:hidden; }
+  .drop-zone::before { content:''; position:absolute; inset:0; background:var(--green-glow); opacity:0; transition:opacity .2s; }
+  .drop-zone:hover,.drop-zone.drag-over { border-color:var(--green); color:var(--green); }
+  .drop-zone:hover::before,.drop-zone.drag-over::before { opacity:1; }
+  .drop-icon { font-size:16px; display:block; margin-bottom:4px; }
+  .sec-badge { display:inline-flex; align-items:center; gap:4px; font-size:8px; color:var(--text-muted); letter-spacing:1px; margin-top:4px; border:1px solid var(--border); padding:2px 6px; }
+
+  /* SECURITY ALERT */
+  .sec-alert { margin:6px 10px 0; border:1px solid var(--warn); background:rgba(255,176,0,.05); padding:8px 10px; font-size:9px; color:var(--warn); letter-spacing:.5px; line-height:1.6; display:none; }
+  .sec-alert.visible { display:block; }
+  .sec-alert-title { font-size:10px; font-weight:700; letter-spacing:2px; margin-bottom:4px; }
+  .sec-alert ul { padding-left:14px; }
+  .sec-alert-close { float:right; background:none; border:none; color:var(--warn); cursor:pointer; font-family:inherit; font-size:11px; padding:0; margin-top:-2px; }
+
+  /* TREE NODES */
+  .tree-nodes { flex:1; overflow-y:auto; padding:4px 0; }
+  .tree-nodes::-webkit-scrollbar { width:4px; }
+  .tree-nodes::-webkit-scrollbar-thumb { background:var(--border-bright); }
+
+  .node-row { display:flex; align-items:center; padding:2px 6px 2px 0; gap:2px; cursor:default; border:1px solid transparent; transition:all .1s; user-select:none; }
+  .node-row:hover { background:rgba(0,255,65,.03); }
+  .node-row.selected { background:var(--green-faint); border-color:rgba(0,255,65,.2); }
+  .node-row.drag-target { border-top:1px solid var(--green) !important; }
+  .node-indent { flex-shrink:0; }
+  .node-toggle { width:14px; height:14px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--text-dim); cursor:pointer; font-size:8px; }
+  .node-toggle:hover { color:var(--green); }
+  .node-icon { flex-shrink:0; font-size:11px; width:16px; text-align:center; }
+  .node-name-wrap { flex:1; min-width:0; display:flex; align-items:center; }
+  .node-name { color:var(--text); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+  .node-name.is-dir { color:var(--green); }
+  .node-name.is-dir:hover { text-shadow:0 0 8px rgba(0,255,65,.5); }
+  .node-name-input { background:transparent; border:none; border-bottom:1px solid var(--green); color:var(--green); font-family:inherit; font-size:12px; outline:none; width:100%; padding:0; }
+  .node-actions { display:flex; gap:2px; opacity:0; transition:opacity .1s; }
+  .node-row:hover .node-actions,.node-row.selected .node-actions { opacity:1; }
+  .node-act-btn { background:none; border:none; color:var(--text-muted); font-family:inherit; font-size:10px; cursor:pointer; padding:1px 4px; transition:color .1s; }
+  .node-act-btn:hover { color:var(--green); }
+  .node-act-btn.del:hover { color:var(--red); }
+
+  /* OUTPUT */
+  .output-panel { display:flex; flex-direction:column; overflow:hidden; background:var(--bg); }
+  .output-toolbar { padding:8px 14px; display:flex; gap:6px; align-items:center; border-bottom:1px solid var(--border); background:var(--bg2); flex-shrink:0; }
+  .out-btn { background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); font-family:inherit; font-size:10px; padding:5px 12px; cursor:pointer; letter-spacing:1px; text-transform:uppercase; transition:all .12s; }
+  .out-btn:hover { border-color:var(--green); color:var(--green); background:var(--green-faint); box-shadow:0 0 8px rgba(0,255,65,.1); }
+  .out-btn.primary { border-color:var(--green-dim); color:var(--green); background:var(--green-faint); }
+  .out-btn.primary:hover { box-shadow:0 0 16px rgba(0,255,65,.3); }
+  .output-area { flex:1; overflow-y:auto; padding:20px 24px; position:relative; }
+  .output-area::-webkit-scrollbar { width:4px; }
+  .output-area::-webkit-scrollbar-thumb { background:var(--border-bright); }
+  .tree-output { white-space:pre; font-size:13px; line-height:1.6; color:var(--text); font-family:'JetBrains Mono',monospace; letter-spacing:.3px; }
+  .tree-output .dir { color:var(--green); text-shadow:0 0 6px rgba(0,255,65,.3); }
+  .tree-output .branch { color:var(--text-muted); }
+  .tree-output .root { color:var(--green); font-weight:700; text-shadow:0 0 10px rgba(0,255,65,.5); }
+
+  /* MODAL */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.85); z-index:1000; display:none; align-items:center; justify-content:center; }
+  .modal-overlay.open { display:flex; }
+  .modal { background:var(--bg2); border:1px solid var(--border-bright); width:560px; max-width:95vw; box-shadow:0 0 40px rgba(0,255,65,.1); }
+  .modal-header { padding:12px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; background:var(--bg3); }
+  .modal-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--green); }
+  .modal-close { background:none; border:none; color:var(--text-dim); font-size:16px; cursor:pointer; font-family:inherit; padding:0 4px; }
+  .modal-close:hover { color:var(--red); }
+  .modal-body { padding:16px; }
+  .modal-label { font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; display:block; }
+  .modal-textarea { width:100%; height:200px; background:var(--bg); border:1px solid var(--border); color:var(--text); font-family:'JetBrains Mono',monospace; font-size:12px; padding:10px; resize:none; outline:none; line-height:1.5; }
+  .modal-textarea:focus { border-color:var(--green-dim); }
+  .modal-textarea::placeholder { color:var(--text-muted); }
+  .modal-footer { padding:10px 16px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end; background:var(--bg3); }
+  .sec-info-bar { margin-top:8px; background:rgba(0,255,65,.03); border:1px solid var(--border); padding:6px 10px; font-size:9px; color:var(--text-muted); letter-spacing:.5px; line-height:1.7; }
+  .sec-info-bar .ok { color:var(--green-dim); }
+  .sec-info-bar .lbl { color:var(--text-dim); }
+
+  /* STATUS BAR */
+  .statusbar { border-top:1px solid var(--border); padding:4px 16px; display:flex; align-items:center; gap:16px; background:var(--bg3); font-size:9px; color:var(--text-muted); letter-spacing:1px; flex-shrink:0; }
+  .statusbar-item { display:flex; align-items:center; gap:5px; }
+  .dot { width:5px; height:5px; border-radius:50%; background:var(--green); box-shadow:0 0 6px var(--green); animation:blink 2s ease-in-out infinite; }
+  .dot.warn { background:var(--warn); box-shadow:0 0 6px var(--warn); }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .sep { color:var(--border-bright); }
+  #secStatus { color:var(--green-dim); }
+  #secStatus.warn { color:var(--warn); }
+
+  /* NEW NODE ROW */
+  .new-node-row { display:flex; align-items:center; padding:4px 10px; gap:6px; border-top:1px solid var(--border); flex-shrink:0; background:var(--bg3); }
+  .new-node-input { flex:1; background:transparent; border:none; border-bottom:1px solid var(--border); color:var(--text); font-family:inherit; font-size:11px; outline:none; padding:2px 4px; }
+  .new-node-input:focus { border-bottom-color:var(--green); color:var(--green); }
+  .new-node-input::placeholder { color:var(--text-muted); }
+  .new-node-type { background:var(--bg3); border:1px solid var(--border); color:var(--text-dim); font-family:inherit; font-size:10px; padding:2px 6px; cursor:pointer; outline:none; }
+  select option { background:var(--bg3); color:var(--text); }
+  .add-btn { background:var(--green-faint); border:1px solid var(--green-dim); color:var(--green); font-family:inherit; font-size:10px; padding:3px 8px; cursor:pointer; transition:all .12s; }
+  .add-btn:hover { background:rgba(0,255,65,.15); box-shadow:0 0 8px rgba(0,255,65,.2); }
+
+  .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:12px; color:var(--text-muted); font-size:11px; letter-spacing:1px; }
+  .empty-ascii { font-size:11px; line-height:1.4; color:var(--border-bright); text-align:center; }
+
+  .toast { position:fixed; bottom:36px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--bg3); border:1px solid var(--green); color:var(--green); font-size:11px; padding:8px 20px; letter-spacing:1px; box-shadow:0 0 20px rgba(0,255,65,.2); opacity:0; transition:all .2s; z-index:2000; pointer-events:none; white-space:nowrap; max-width:90vw; overflow:hidden; text-overflow:ellipsis; }
+  .toast.warn-toast { border-color:var(--warn); color:var(--warn); box-shadow:0 0 20px rgba(255,176,0,.2); }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="header">
+    <div class="logo">
+      <span class="logo-icon">🌲</span>
+      <div>
+        <div class="logo-text">TreeScribe</div>
+        <div class="logo-sub">ASCII Directory Tree Creator</div>
+      </div>
+    </div>
+    <div class="header-mid">
+      <span style="font-size:9px;color:var(--text-muted);letter-spacing:1px;margin-right:6px;">STYLE:</span>
+      <button class="style-btn active" data-style="classic">Classic</button>
+      <button class="style-btn" data-style="rounded">Rounded</button>
+      <button class="style-btn" data-style="ascii">Pure ASCII</button>
+      <button class="style-btn" data-style="minimal">Minimal</button>
+    </div>
+    <div class="header-right" id="nodeCountHeader">0 nodes</div>
+  </header>
+
+  <main class="main">
+    <aside class="sidebar">
+      <div class="panel-header">
+        <div class="panel-title"><span>//</span> TREE BUILDER</div>
+        <div style="display:flex;gap:4px;">
+          <button class="tb-btn" onclick="openImport()">⇩ IMPORT</button>
+          <button class="tb-btn danger" onclick="clearAll()">✕ CLEAR</button>
+        </div>
+      </div>
+
+      <div class="drop-zone" id="dropZone" onclick="triggerFolderPick()">
+        <span class="drop-icon">📂</span>
+        DROP FOLDER HERE<br>
+        <span style="font-size:9px;opacity:.5;margin-top:2px;display:block;">or click to browse</span>
+        <div class="sec-badge">🛡 NAMES ONLY · NO FILE CONTENTS READ</div>
+        <input type="file" id="folderInput" webkitdirectory multiple style="display:none" onchange="handleFolderInput(this)"/>
+      </div>
+
+      <!-- Security alert -->
+      <div class="sec-alert" id="secAlert">
+        <button class="sec-alert-close" onclick="dismissAlert()">✕</button>
+        <div class="sec-alert-title">⚠ SECURITY FILTER TRIGGERED</div>
+        <div id="secAlertBody"></div>
+      </div>
+
+      <div class="tree-toolbar">
+        <button class="tb-btn" onclick="addNode('dir')">+ DIR</button>
+        <button class="tb-btn" onclick="addNode('file')">+ FILE</button>
+        <button class="tb-btn" onclick="addChildToSelected()">+ CHILD</button>
+        <button class="tb-btn" onclick="moveSelectedUp()">↑ UP</button>
+        <button class="tb-btn" onclick="moveSelectedDown()">↓ DOWN</button>
+      </div>
+
+      <div class="tree-nodes" id="treeNodes"></div>
+
+      <div class="new-node-row">
+        <span style="color:var(--text-muted);font-size:11px;">$</span>
+        <input class="new-node-input" id="quickInput" type="text" placeholder="filename or dirname/" maxlength="255"/>
+        <select class="new-node-type" id="quickType">
+          <option value="auto">auto</option>
+          <option value="dir">dir</option>
+          <option value="file">file</option>
+        </select>
+        <button class="add-btn" onclick="quickAdd()">ADD</button>
+      </div>
+    </aside>
+
+    <section class="output-panel">
+      <div class="panel-header" style="padding:8px 14px;">
+        <div class="panel-title"><span>//</span> TREE OUTPUT</div>
+        <div style="display:flex;gap:6px;">
+          <button class="out-btn primary" onclick="copyTree()">⎘ COPY</button>
+          <button class="out-btn" onclick="downloadTree()">⬇ DOWNLOAD .TXT</button>
+        </div>
+      </div>
+      <div class="output-area">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-ascii">
+┌─────────────────────────────┐<br>
+│                             │<br>
+│   drop a folder or start    │<br>
+│   building your tree...     │<br>
+│                             │<br>
+└─────────────────────────────┘
+          </div>
+          <span style="color:var(--text-muted);font-size:10px;letter-spacing:2px;">YOUR TREE WILL APPEAR HERE</span>
+        </div>
+        <pre class="tree-output" id="treeOutput" style="display:none"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <div class="statusbar-item"><div class="dot" id="statusDot"></div><span id="statusLabel">READY</span></div>
+    <span class="sep">│</span>
+    <div class="statusbar-item" id="statusNodes">0 NODES</div>
+    <span class="sep">│</span>
+    <div class="statusbar-item" id="statusDepth">DEPTH: 0</div>
+    <span class="sep">│</span>
+    <div class="statusbar-item" id="statusChars">0 CHARS</div>
+    <span class="sep">│</span>
+    <div class="statusbar-item" id="statusStyle">STYLE: CLASSIC</div>
+    <span class="sep">│</span>
+    <div class="statusbar-item" id="secStatus">🛡 SECURE</div>
+  </footer>
+</div>
+
+<!-- IMPORT MODAL -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">// IMPORT TREE OR PATH LIST</span>
+      <button class="modal-close" onclick="closeImport()">✕</button>
+    </div>
+    <div class="modal-body">
+      <span class="modal-label">Paste an existing ASCII tree or one path per line:</span>
+      <textarea class="modal-textarea" id="importText" placeholder="src/
+  components/
+    Button.jsx
+  index.js
+README.md" maxlength="50000"></textarea>
+      <div class="sec-info-bar">
+        <span class="lbl">SECURITY:</span>
+        <span class="ok"> ✓ input sanitized</span> ·
+        <span class="ok"> ✓ script injection blocked</span> ·
+        <span class="ok"> ✓ path traversal filtered</span> ·
+        <span class="ok"> ✓ max 2000 nodes enforced</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="out-btn" onclick="closeImport()">CANCEL</button>
+      <button class="out-btn primary" onclick="doImport()">IMPORT</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   TREESCRIBE SECURITY LAYER
+   ─────────────────────────────────────────────────────────
+   Threats addressed:
+    1. XSS via filename / path injection → all user text
+       goes through escHtml() before any innerHTML touch
+    2. Script / event-handler injection → BLOCKED_PATTERNS
+    3. Path traversal (../, absolute paths) → TRAVERSAL_PATTERNS
+    4. Null byte injection → stripped
+    5. Excessively long names → capped at 255 chars
+    6. Unicode bidi-override / zero-width spoofing → blocked
+    7. "Zip bomb" node explosion → MAX_NODES: 2000
+    8. Prototype pollution (__proto__, constructor) → blocked
+    9. File content reading → NEVER called (names only)
+   10. Dangerous extension → warned but allowed (just names)
+   11. Output is always plain text/txt → no HTML execution
+   12. CSP header blocks eval, remote scripts, fetch
+   ═══════════════════════════════════════════════════════════ */
+
+  const SEC = Object.freeze({
+    MAX_NAME_LEN:     255,
+    MAX_NODES:        2000,
+    MAX_DEPTH:        20,
+    MAX_IMPORT_CHARS: 50000,
+    MAX_IMPORT_LINES: 3000,
+
+    BLOCKED_PATTERNS: [
+      /<script/i,
+      /<\/script/i,
+      /javascript:/i,
+      /vbscript:/i,
+      /data:/i,
+      /on\w+\s*=/i,
+      /&[#a-z0-9]+;/i,
+      /\x00/,
+      /[\u200b-\u200f\u202a-\u202e\uFEFF]/,
+    ],
+
+    TRAVERSAL_PATTERNS: [
+      /\.\.[/\\]/,
+      /^[/\\]/,
+      /[/\\]{2,}/,
+      /^~/,
+      /\$\{/,
+      /`/,
+    ],
+
+    SENSITIVE_EXTS: new Set([
+      'exe','bat','cmd','sh','ps1','psm1','vbs','js','mjs','cjs',
+      'html','htm','svg','xml','php','py','rb','pl','jar','app',
+      'dll','so','dylib','com','pif','scr','lnk','inf','reg',
+    ]),
+
+    POISON_NAMES: new Set(['__proto__','constructor','prototype']),
+  });
+
+  /* ── escHtml ─────────────────────────────────────────────
+     ALL user-supplied strings pass through this before
+     they touch innerHTML. This is the primary XSS shield. */
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g,'&amp;')
+      .replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;')
+      .replace(/'/g,'&#39;')
+      .replace(/`/g,'&#96;');
+  }
+
+  /* ── sanitizeName ────────────────────────────────────────
+     Validates and cleans a single filename / dirname.
+     Returns { ok, name, warnings[] } */
+  function sanitizeName(raw) {
+    const warnings = [];
+    if (typeof raw !== 'string') {
+      return { ok: false, name: '', warnings: ['Non-string name rejected'] };
+    }
+
+    let name = raw.trim().replace(/[/\\]+$/, '');
+
+    // null byte
+    if (name.includes('\x00')) {
+      warnings.push('Null byte removed from filename');
+      name = name.replace(/\x00/g, '');
+    }
+
+    if (!name.length) return { ok: false, name: '', warnings: ['Empty name'] };
+
+    // length cap
+    if (name.length > SEC.MAX_NAME_LEN) {
+      warnings.push('Name truncated: exceeded ' + SEC.MAX_NAME_LEN + ' chars');
+      name = name.slice(0, SEC.MAX_NAME_LEN);
+    }
+
+    // path traversal
+    for (const pat of SEC.TRAVERSAL_PATTERNS) {
+      if (pat.test(name)) {
+        return { ok: false, name: '', warnings: ['Path traversal blocked: ' + escHtml(name.slice(0, 40))] };
+      }
+    }
+
+    // injection patterns
+    for (const pat of SEC.BLOCKED_PATTERNS) {
+      if (pat.test(name)) {
+        return { ok: false, name: '', warnings: ['Injection pattern blocked: ' + escHtml(name.slice(0, 40))] };
+      }
+    }
+
+    // allowlist: strip unsafe chars instead of outright reject
+    const safe = name.split('').filter(ch => /[\w\s.\-+()[\]{}_@#%^&!=,~']/.test(ch)).join('');
+    if (safe !== name) {
+      warnings.push('Unsafe chars stripped from: ' + escHtml(name.slice(0, 40)));
+      name = safe;
+    }
+
+    if (!name.length) return { ok: false, name: '', warnings: ['Name empty after sanitization'] };
+
+    // prototype pollution guard
+    if (SEC.POISON_NAMES.has(name)) {
+      return { ok: false, name: '', warnings: ['Prototype pollution name blocked: ' + name] };
+    }
+
+    return { ok: true, name, warnings };
+  }
+
+  function warnExtension(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    return SEC.SENSITIVE_EXTS.has(ext) ? 'Executable extension noted: .' + ext : null;
+  }
+
+  /* ── Security UI ──────────────────────────────────────── */
+  let secViolations = 0;
+
+  function reportViolation(messages) {
+    if (!messages || !messages.length) return;
+    secViolations += messages.length;
+    const body = document.getElementById('secAlertBody');
+    body.innerHTML = '<ul>' + messages.map(m => '<li>' + escHtml(m) + '</li>').join('') + '</ul>';
+    document.getElementById('secAlert').classList.add('visible');
+    document.getElementById('secStatus').textContent = '\u26a0 ' + secViolations + ' FILTERED';
+    document.getElementById('secStatus').className = 'warn';
+    document.getElementById('statusDot').className = 'dot warn';
+    document.getElementById('statusLabel').textContent = 'FILTER ACTIVE';
+    toast(messages[0], true);
+  }
+
+  function dismissAlert() {
+    document.getElementById('secAlert').classList.remove('visible');
+  }
+
+  /* ── Data Model ───────────────────────────────────────── */
+  let nodeIdCounter = 0;
+  let nodes = [];
+  let selectedId = null;
+  let currentStyle = 'classic';
+
+  const STYLES = {
+    classic:  { branch:'├── ', last:'└── ', pipe:'│   ', space:'    ' },
+    rounded:  { branch:'├─╴ ', last:'╰─╴ ', pipe:'│   ', space:'    ' },
+    ascii:    { branch:'+-- ', last:'\\-- ', pipe:'|   ', space:'    ' },
+    minimal:  { branch:'  ├ ', last:'  └ ', pipe:'  │ ', space:'    ' },
+  };
+
+  function newId() { return ++nodeIdCounter; }
+
+  function init() {
+    const rootId = newId();
+    nodes.push({ id:rootId, name:'my-project', type:'dir', parentId:null, order:0, collapsed:false });
+    const srcId = newId();
+    nodes.push({ id:srcId,  name:'src',        type:'dir', parentId:rootId, order:0, collapsed:false });
+    nodes.push({ id:newId(), name:'components', type:'dir', parentId:srcId,  order:0, collapsed:false });
+    nodes.push({ id:newId(), name:'App.jsx',    type:'file', parentId:srcId,  order:1, collapsed:false });
+    nodes.push({ id:newId(), name:'index.js',   type:'file', parentId:srcId,  order:2, collapsed:false });
+    const pubId = newId();
+    nodes.push({ id:pubId,  name:'public',      type:'dir', parentId:rootId, order:1, collapsed:false });
+    nodes.push({ id:newId(), name:'index.html', type:'file', parentId:pubId,  order:0, collapsed:false });
+    nodes.push({ id:newId(), name:'package.json',type:'file',parentId:rootId, order:2, collapsed:false });
+    nodes.push({ id:newId(), name:'README.md',  type:'file', parentId:rootId, order:3, collapsed:false });
+    render();
+  }
+
+  /* ── Render ───────────────────────────────────────────── */
+  function render() { renderSidebar(); renderOutput(); updateStatus(); }
+
+  function renderSidebar() {
+    const container = document.getElementById('treeNodes');
+    container.innerHTML = '';
+    getChildren(null).forEach(n => renderNode(n, 0, container));
+  }
+
+  function renderNode(node, depth, container) {
+    const row = document.createElement('div');
+    row.className = 'node-row' + (node.id === selectedId ? ' selected' : '');
+    row.dataset.id = String(node.id);
+    row.draggable = true;
+
+    const indent = document.createElement('div');
+    indent.className = 'node-indent';
+    indent.style.width = (depth * 16 + 8) + 'px';
+    row.appendChild(indent);
+
+    const toggle = document.createElement('div');
+    toggle.className = 'node-toggle';
+    if (node.type === 'dir') {
+      toggle.textContent = node.collapsed ? '▶' : '▼';
+      toggle.onclick = e => { e.stopPropagation(); toggleCollapse(node.id); };
+    }
+    row.appendChild(toggle);
+
+    const icon = document.createElement('div');
+    icon.className = 'node-icon';
+    icon.textContent = node.type === 'dir' ? (node.collapsed ? '📁' : '📂') : fileIcon(node.name);
+    row.appendChild(icon);
+
+    const nameWrap = document.createElement('div');
+    nameWrap.className = 'node-name-wrap';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'node-name' + (node.type === 'dir' ? ' is-dir' : '');
+    nameEl.textContent = node.name + (node.type === 'dir' ? '/' : ''); // textContent = XSS-safe
+    nameEl.ondblclick = e => { e.stopPropagation(); startRename(node.id, nameEl); };
+    nameWrap.appendChild(nameEl);
+    row.appendChild(nameWrap);
+
+    const actions = document.createElement('div');
+    actions.className = 'node-actions';
+    if (node.type === 'dir') {
+      actions.appendChild(actBtn('+f', 'Add file', false, e => { e.stopPropagation(); addChildNode(node.id,'file'); }));
+      actions.appendChild(actBtn('+d', 'Add dir',  false, e => { e.stopPropagation(); addChildNode(node.id,'dir'); }));
+    }
+    actions.appendChild(actBtn('✕', 'Delete', true, e => { e.stopPropagation(); deleteNode(node.id); }));
+    row.appendChild(actions);
+
+    row.onclick = () => { selectedId = node.id; renderSidebar(); };
+
+    row.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', String(node.id)));
+    row.addEventListener('dragover', e => {
+      e.preventDefault();
+      document.querySelectorAll('.drag-target').forEach(el => el.classList.remove('drag-target'));
+      row.classList.add('drag-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-target'));
+    row.addEventListener('drop', e => {
+      e.preventDefault(); row.classList.remove('drag-target');
+      const id = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (!isNaN(id) && id !== node.id) moveNodeBefore(id, node.id);
+    });
+
+    container.appendChild(row);
+    if (node.type === 'dir' && !node.collapsed)
+      getChildren(node.id).forEach(c => renderNode(c, depth + 1, container));
+  }
+
+  function actBtn(label, title, danger, handler) {
+    const b = document.createElement('button');
+    b.className = 'node-act-btn' + (danger ? ' del' : '');
+    b.textContent = label; b.title = title; b.onclick = handler;
+    return b;
+  }
+
+  function fileIcon(name) {
+    const ext = name.split('.').pop().toLowerCase();
+    return ({js:'⚡',jsx:'⚛',ts:'📘',tsx:'⚛',json:'{}',md:'📝',html:'🌐',css:'🎨',scss:'🎨',
+             py:'🐍',rs:'🦀',go:'🐹',rb:'💎',java:'☕',php:'🐘',c:'⚙',cpp:'⚙',sh:'🖥',
+             env:'🔒',svg:'🖼',png:'🖼',jpg:'🖼',gif:'🖼',ico:'🖼',txt:'📄',pdf:'📋',
+             zip:'📦',yml:'⚙',yaml:'⚙',toml:'⚙',lock:'🔒'})[ext] || '📄';
+  }
+
+  function getChildren(parentId) {
+    return nodes
+      .filter(n => n.parentId === parentId)
+      .sort((a, b) => a.type !== b.type ? (a.type === 'dir' ? -1 : 1) : a.order - b.order);
+  }
+
+  /* ── Tree Output ──────────────────────────────────────── */
+  function renderOutput() {
+    const out = document.getElementById('treeOutput');
+    const empty = document.getElementById('emptyState');
+    if (!nodes.length) { out.style.display='none'; empty.style.display='flex'; return; }
+    out.style.display='block'; empty.style.display='none';
+    // colorize() returns HTML where all user data is already escaped
+    out.innerHTML = buildLines_top().map(colorize).join('\n');
+  }
+
+  function buildLines_top() {
+    const st = STYLES[currentStyle] || STYLES.classic;
+    const lines = [];
+    getChildren(null).forEach(root => {
+      // escHtml applied at point of use so plain getTreeText() can strip it
+      lines.push(escHtml(root.name) + (root.type === 'dir' ? '/' : ''));
+      if (!root.collapsed) buildLinesRec(root.id, '', lines, st);
+    });
+    return lines;
+  }
+
+  function buildLinesRec(parentId, prefix, lines, st) {
+    const ch = getChildren(parentId);
+    ch.forEach((child, idx) => {
+      const last = idx === ch.length - 1;
+      const conn = last ? st.last : st.branch;
+      lines.push(escHtml(prefix + conn) + escHtml(child.name) + (child.type === 'dir' ? '/' : ''));
+      if (child.type === 'dir' && !child.collapsed)
+        buildLinesRec(child.id, prefix + (last ? st.space : st.pipe), lines, st);
+    });
+  }
+
+  function colorize(line) {
+    // All content is already HTML-escaped before reaching here
+    if (!line.match(/^[&\s│|+\\├└╰]/)) return '<span class="root">' + line + '</span>';
+    const m = line.match(/^(.*?)([^<>\s&│|+\\├└╰─╴\-=]+\/?)$/);
+    if (m) return '<span class="branch">' + m[1] + '</span><span class="' + (m[2].endsWith('/') ? 'dir' : '') + '">' + m[2] + '</span>';
+    return line;
+  }
+
+  function unescHtml(s) {
+    return s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&#96;/g,'`');
+  }
+
+  function getTreeText() {
+    return buildLines_top().map(unescHtml).join('\n');
+  }
+
+  /* ── Actions ──────────────────────────────────────────── */
+  function addNode(type, parentId = null) {
+    if (nodes.length >= SEC.MAX_NODES) { toast('Node limit (' + SEC.MAX_NODES + ') reached', true); return; }
+    const name = type === 'dir' ? 'new-folder' : 'new-file.txt';
+    const node = { id:newId(), name, type, parentId, order:getChildren(parentId).length, collapsed:false };
+    nodes.push(node); selectedId = node.id; render();
+    setTimeout(() => {
+      const el = document.querySelector('[data-id="' + node.id + '"] .node-name');
+      if (el) startRename(node.id, el);
+    }, 50);
+  }
+
+  function addChildNode(parentId, type) {
+    const n = nodes.find(x => x.id === parentId);
+    if (n) n.collapsed = false;
+    addNode(type, parentId);
+  }
+
+  function addChildToSelected() {
+    if (!selectedId) { toast('Select a directory first', true); return; }
+    const s = nodes.find(n => n.id === selectedId);
+    if (!s || s.type !== 'dir') { toast('Select a directory to add a child', true); return; }
+    addChildNode(selectedId, 'file');
+  }
+
+  function deleteNode(id) {
+    const del = new Set();
+    const collect = nid => { del.add(nid); getChildren(nid).forEach(c => collect(c.id)); };
+    collect(id);
+    nodes = nodes.filter(n => !del.has(n.id));
+    if (del.has(selectedId)) selectedId = null;
+    render();
+  }
+
+  function toggleCollapse(id) {
+    const n = nodes.find(x => x.id === id);
+    if (n) { n.collapsed = !n.collapsed; render(); }
+  }
+
+  function startRename(id, el) {
+    const node = nodes.find(n => n.id === id);
+    if (!node) return;
+    const inp = document.createElement('input');
+    inp.className = 'node-name-input';
+    inp.value = node.name;
+    inp.maxLength = SEC.MAX_NAME_LEN;
+    el.replaceWith(inp); inp.focus(); inp.select();
+    const finish = () => {
+      const { ok, name, warnings } = sanitizeName(inp.value);
+      if (warnings.length) reportViolation(warnings);
+      if (ok && name) {
+        node.name = name;
+        const w = warnExtension(name);
+        if (w) toast(w, true);
+      }
+      render();
+    };
+    inp.onblur = finish;
+    inp.onkeydown = e => { if (e.key==='Enter') { e.preventDefault(); finish(); } if (e.key==='Escape') render(); };
+  }
+
+  function moveSelectedUp() {
+    if (!selectedId) return;
+    const node = nodes.find(n => n.id === selectedId);
+    if (!node) return;
+    const siblings = getChildren(node.parentId);
+    const idx = siblings.findIndex(n => n.id === selectedId);
+    if (idx > 0) {
+      [siblings[idx].order, siblings[idx-1].order] = [siblings[idx-1].order, siblings[idx].order];
+      siblings.forEach((n,i) => n.order = i); render();
+    }
+  }
+
+  function moveSelectedDown() {
+    if (!selectedId) return;
+    const node = nodes.find(n => n.id === selectedId);
+    if (!node) return;
+    const siblings = getChildren(node.parentId);
+    const idx = siblings.findIndex(n => n.id === selectedId);
+    if (idx < siblings.length - 1) {
+      [siblings[idx].order, siblings[idx+1].order] = [siblings[idx+1].order, siblings[idx].order];
+      siblings.forEach((n,i) => n.order = i); render();
+    }
+  }
+
+  function moveNodeBefore(dragId, targetId) {
+    const drag = nodes.find(n => n.id === dragId);
+    const target = nodes.find(n => n.id === targetId);
+    if (!drag || !target) return;
+    drag.parentId = target.parentId;
+    const sib = getChildren(target.parentId);
+    const ti = sib.findIndex(n => n.id === targetId);
+    const filtered = sib.filter(n => n.id !== dragId);
+    filtered.splice(ti, 0, drag);
+    filtered.forEach((n,i) => n.order = i);
+    render();
+  }
+
+  function clearAll() {
+    nodes = []; selectedId = null; secViolations = 0;
+    document.getElementById('secStatus').textContent = '🛡 SECURE';
+    document.getElementById('secStatus').className = '';
+    document.getElementById('statusDot').className = 'dot';
+    document.getElementById('statusLabel').textContent = 'READY';
+    dismissAlert(); render(); toast('Tree cleared');
+  }
+
+  function quickAdd() {
+    if (nodes.length >= SEC.MAX_NODES) { toast('Node limit reached', true); return; }
+    const inp = document.getElementById('quickInput');
+    const typeEl = document.getElementById('quickType');
+    let raw = inp.value.trim(); if (!raw) return;
+    let type = typeEl.value, nameRaw = raw;
+    if (type === 'auto') { type = raw.endsWith('/') ? 'dir' : 'file'; nameRaw = raw.replace(/\/$/, ''); }
+    const { ok, name, warnings } = sanitizeName(nameRaw);
+    if (warnings.length) reportViolation(warnings);
+    if (!ok || !name) { inp.value = ''; return; }
+    const w = warnExtension(name);
+    if (w) toast(w, true);
+    const parentId = selectedId && nodes.find(n => n.id === selectedId && n.type === 'dir') ? selectedId : null;
+    nodes.push({ id:newId(), name, type, parentId, order:getChildren(parentId).length, collapsed:false });
+    inp.value = ''; render();
+  }
+
+  document.getElementById('quickInput').addEventListener('keydown', e => { if (e.key === 'Enter') quickAdd(); });
+
+  /* ── Style buttons ────────────────────────────────────── */
+  document.querySelectorAll('.style-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const s = btn.dataset.style;
+      // Validate against known keys — never eval or dynamic access
+      if (!Object.prototype.hasOwnProperty.call(STYLES, s)) return;
+      document.querySelectorAll('.style-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentStyle = s;
+      document.getElementById('statusStyle').textContent = 'STYLE: ' + s.toUpperCase();
+      renderOutput();
+    });
+  });
+
+  /* ── Copy / Download ──────────────────────────────────── */
+  function copyTree() {
+    const text = getTreeText();
+    if (!text) { toast('Nothing to copy', true); return; }
+    navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => {
+      const el = document.createElement('textarea');
+      el.value = text; el.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+      document.body.appendChild(el); el.select(); document.execCommand('copy');
+      document.body.removeChild(el); toast('Copied to clipboard!');
+    });
+  }
+
+  function downloadTree() {
+    const text = getTreeText();
+    if (!text) { toast('Nothing to download', true); return; }
+    // Force plain text MIME and .txt extension — no executable content can run
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'tree.txt'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('Downloaded tree.txt');
+  }
+
+  /* ── Folder Drop ──────────────────────────────────────── */
+  // SECURITY: only entry.name and entry.isDirectory are accessed.
+  // We NEVER call file.text(), file.arrayBuffer(), or FileReader.
+  // Zero bytes of file content are ever read.
+
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    const items = e.dataTransfer.items;
+    if (!items) return;
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+      if (entry) entries.push(entry);
+    }
+    if (entries.length) {
+      nodes = []; selectedId = null;
+      processEntries(entries, null, 0).then(() => { render(); toast('Folder imported!'); });
+    }
+  });
+
+  async function processEntries(entries, parentId, depth) {
+    const violations = [];
+    for (let i = 0; i < entries.length; i++) {
+      if (nodes.length >= SEC.MAX_NODES) { violations.push('Node limit hit — import truncated'); break; }
+      if (depth >= SEC.MAX_DEPTH) continue;
+      const entry = entries[i];
+      if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === '__pycache__') continue;
+      const { ok, name, warnings } = sanitizeName(entry.name);
+      violations.push(...warnings);
+      if (!ok) continue;
+      const node = { id:newId(), name, type:entry.isDirectory?'dir':'file', parentId, order:i, collapsed:false };
+      nodes.push(node);
+      const w = !entry.isDirectory && warnExtension(name);
+      if (w) violations.push(w);
+      if (entry.isDirectory) {
+        const children = await readDir(entry);
+        await processEntries(children.filter(e => !e.name.startsWith('.')), node.id, depth + 1);
+      }
+    }
+    if (violations.length) reportViolation(violations);
+  }
+
+  function readDir(entry) {
+    return new Promise(resolve => {
+      const reader = entry.createReader(); let all = [];
+      const read = () => reader.readEntries(batch => {
+        if (!batch.length) resolve(all); else { all = all.concat(Array.from(batch)); read(); }
+      }, () => resolve(all));
+      read();
+    });
+  }
+
+  function triggerFolderPick() { document.getElementById('folderInput').click(); }
+
+  function handleFolderInput(input) {
+    const files = Array.from(input.files);
+    if (!files.length) return;
+    nodes = []; selectedId = null;
+    const violations = []; let count = 0;
+    files.forEach(file => {
+      if (count >= SEC.MAX_NODES) return;
+      // SECURITY: only use webkitRelativePath string — no file.text() / arrayBuffer()
+      const parts = file.webkitRelativePath.split('/');
+      let parentId = null;
+      parts.forEach((part, idx) => {
+        if (count >= SEC.MAX_NODES) return;
+        if (idx >= SEC.MAX_DEPTH) return;
+        const isLast = idx === parts.length - 1;
+        const type = isLast ? 'file' : 'dir';
+        const { ok, name, warnings } = sanitizeName(part);
+        violations.push(...warnings);
+        if (!ok) return;
+        let existing = nodes.find(n => n.name === name && n.parentId === parentId && n.type === type);
+        if (!existing) {
+          existing = { id:newId(), name, type, parentId, order:nodes.filter(n=>n.parentId===parentId).length, collapsed:false };
+          nodes.push(existing); count++;
+          const w = type === 'file' && warnExtension(name);
+          if (w) violations.push(w);
+        }
+        if (!isLast) parentId = existing.id;
+      });
+    });
+    if (violations.length) reportViolation(violations);
+    render(); toast('Folder imported!');
+  }
+
+  /* ── Import Modal ─────────────────────────────────────── */
+  function openImport() { document.getElementById('importModal').classList.add('open'); document.getElementById('importText').focus(); }
+  function closeImport() { document.getElementById('importModal').classList.remove('open'); }
+
+  function doImport() {
+    let raw = document.getElementById('importText').value;
+    if (raw.length > SEC.MAX_IMPORT_CHARS) {
+      raw = raw.slice(0, SEC.MAX_IMPORT_CHARS);
+      toast('Input truncated to ' + SEC.MAX_IMPORT_CHARS + ' chars', true);
+    }
+    const lines = raw.split('\n').slice(0, SEC.MAX_IMPORT_LINES);
+    if (!lines.some(l => l.trim())) { closeImport(); return; }
+    nodes = []; selectedId = null;
+    const violations = [];
+    const depthStack = []; // [{id, depth}]
+
+    lines.forEach(line => {
+      if (!line.trim() || nodes.length >= SEC.MAX_NODES) return;
+      const stripped = line
+        .replace(/[│|├└╰+\\─╴\s]*(├──|└──|├─╴|╰─╴|\+--|\\--|  ├|  └)/g, '')
+        .replace(/^[│|┤└├╰+\\ \-─╴]+/, '')
+        .trim();
+      const nameRaw = stripped.replace(/\/+$/, '').trim();
+      if (!nameRaw) return;
+      const { ok, name, warnings } = sanitizeName(nameRaw);
+      violations.push(...warnings);
+      if (!ok || !name) return;
+      const type = stripped.trimEnd().endsWith('/') ? 'dir' : (name.includes('.') ? 'file' : 'dir');
+      const depth = Math.floor((line.match(/^(\s*)/)[1].length) / 2);
+      while (depthStack.length && depthStack[depthStack.length-1].depth >= depth) depthStack.pop();
+      const parentId = depthStack.length ? depthStack[depthStack.length-1].id : null;
+      const node = { id:newId(), name, type, parentId, order:nodes.filter(n=>n.parentId===parentId).length, collapsed:false };
+      nodes.push(node);
+      if (type === 'dir') depthStack.push({ id:node.id, depth });
+      const w = type === 'file' && warnExtension(name);
+      if (w) violations.push(w);
+    });
+
+    if (violations.length) reportViolation(violations);
+    closeImport(); render(); toast('Tree imported!');
+  }
+
+  document.getElementById('importModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('importModal')) closeImport();
+  });
+
+  /* ── Status bar ───────────────────────────────────────── */
+  function updateStatus() {
+    const text = getTreeText();
+    let maxDepth = 0;
+    nodes.forEach(n => {
+      let d = 0, cur = n;
+      while (cur && cur.parentId !== null) {
+        d++; cur = nodes.find(x => x.id === cur.parentId) || null;
+        if (d > 200) break; // infinite-loop guard
+      }
+      if (d > maxDepth) maxDepth = d;
+    });
+    document.getElementById('statusNodes').textContent = nodes.length + ' NODES';
+    document.getElementById('statusDepth').textContent = 'DEPTH: ' + maxDepth;
+    document.getElementById('statusChars').textContent = text.length + ' CHARS';
+    document.getElementById('nodeCountHeader').textContent = nodes.length + ' nodes';
+  }
+
+  /* ── Toast ────────────────────────────────────────────── */
+  let toastTimer;
+  function toast(msg, warn = false) {
+    const el = document.getElementById('toast');
+    el.textContent = (warn ? '\u26a0 ' : '> ') + msg;
+    el.className = 'toast' + (warn ? ' warn-toast' : '') + ' show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+  }
+
+  /* ── Keyboard shortcuts ───────────────────────────────── */
+  document.addEventListener('keydown', e => {
+    if (['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) return;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) deleteNode(selectedId);
+    if (e.key === 'ArrowUp')   moveSelectedUp();
+    if (e.key === 'ArrowDown') moveSelectedDown();
+    if ((e.ctrlKey || e.metaKey) && e.key === 'c') { e.preventDefault(); copyTree(); }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'i') { e.preventDefault(); openImport(); }
+  });
+
+  init();
+</script>
+</body>
+</html>
